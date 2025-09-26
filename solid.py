@@ -40,21 +40,17 @@ s_paths_all = [
     quote("纪录片/"),  # 16
     quote("纪录片（已刮削）/"),  # 8
     quote("综艺/"),  # 4
+    quote("国产剧专属/"),  # 4
     quote("音乐/"),  # 2
     quote("📺画质演示测试（4K，8K，HDR，Dolby）/"),  # 1
 ]
 
 t_paths = [
-    quote("115/"),
-    quote("每日更新/"),
-    quote("纪录片（已刮削）/"),
-    quote("音乐/"),
-    quote("综艺/"),
+    quote("国产剧专属/"),
 ]
 
 s_paths = [
-    quote("每日更新/"),
-    quote("纪录片（已刮削）/"),
+    quote("国产剧专属/"),
 ]
 
 s_pool = [
@@ -222,7 +218,8 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
                 abslink = urljoin(url, href)
                 filename = unquote(urlparse(abslink).path)
                 timestamp_str = link.next_sibling.strip().split()[0:2]
-                timestamp = datetime.strptime(" ".join(timestamp_str), "%d-%b-%Y %H:%M")
+                #timestamp = datetime.strptime(" ".join(timestamp_str), "%d-%b-%Y %H:%M")
+                timestamp = datetime.strptime(" ".join(timestamp_str), "%Y-%m-%d %H:%M")
                 timestamp_unix = int(timestamp.timestamp())
                 filesize = link.next_sibling.strip().split()[2]
                 files.append((abslink, filename, timestamp_unix, filesize))
