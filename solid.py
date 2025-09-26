@@ -471,14 +471,14 @@ def test_media_folder(media, paths):
         return False
 
 
-def test_db_folder(location):
-    if not os.path.isdir(location):
-        logging.error("The path %s is not a directory.", location)
-        return False
-    if not os.access(location, os.W_OK):
-        logging.error("The directory %s doesn't have write permission.", location)
-        return False
-    return True
+#def test_db_folder(location):
+ #   if not os.path.isdir(location):
+  #      logging.error("The path %s is not a directory.", location)
+   #     return False
+    #if not os.access(location, os.W_OK):
+     #   logging.error("The directory %s doesn't have write permission.", location)
+      #  return False
+    #return True
 
 
 def load_paths_from_file(path_file):
