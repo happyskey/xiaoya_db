@@ -34,14 +34,9 @@ s_paths_all = [
     quote("国产剧专属/"),  # 4
 ]
 
-# 定义必须检查的媒体文件夹（用于 test_media_folder）
-t_paths = [
-    quote("国产剧专属/"),
-]
-
 # 定义默认爬取的路径（如果未指定 --paths 或 --all）
 s_paths = [
-    quote("国产剧专属/和谐剧集/"),
+    quote("国产剧专属/"),
 ]
 
 # 定义默认的 URL 池，用于爬取媒体文件
@@ -95,16 +90,10 @@ def pick_a_pool_member(url_list):
             logger.debug("测试 URL: %s", member)
             response = urllib.request.urlopen(member)
             if response.getcode() == 200:
-                content = response.read()
-                try:
-                    content_decoded = content.decode("utf-8")
-                    if "每日更新" in content_decoded:
-                        logger.info("选择 URL: %s", member)
-                        return member
-                    else:
-                        logger.info("URL %s 不包含 '每日更新'", member)
-                except UnicodeDecodeError:
-                    logger.info("URL %s 返回非 UTF-8 内容", member)
+                logger.info("选择 URL: %s", member)
+                return member
+            else:
+                logger.info("URL %s 返回状态码 %s", member, response.getcode())
         except Exception as e:
             logger.info("访问 URL %s 失败: %s", member, e)
     return None
@@ -475,14 +464,6 @@ async def purge_removed_files(localdb, tempdb, media, total_amount):
         except Exception as e:
             logger.error("无法删除文件 %s: %s", file, e)
 
-def test_media_folder(media, paths):
-    """检查媒体目录是否包含必要的子文件夹"""
-    t_paths = [os.path.join(media, unquote(path)) for path in paths]
-    if all(os.path.exists(os.path.abspath(path)) for path in t_paths):
-        return True
-    else:
-        return False
-
 def load_paths_from_file(path_file):
     """从文件中加载路径列表"""
     paths = []
@@ -629,14 +610,7 @@ async def main():
             paths = s_paths
 
     if args.media:
-        if not os.path.exists(os.path.join(args.media, "115")):
-            logging.warning("115 文件夹不存在，正在创建...此解决方法将在下个版本移除")
-            os.makedirs(os.path.join(args.media, "115"))
-        if not test_media_folder(args.media, t_paths):
-            logging.error("路径 %s 不包含所需文件夹，请修正 --media 参数", args.media)
-            sys.exit(1)
-        else:
-            media = args.media.rstrip("/")
+        media = args.media.rstrip("/")
     if not args.url:
         url = pick_a_pool_member(s_pool)
     else:
