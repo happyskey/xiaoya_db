@@ -31,29 +31,17 @@ logging.getLogger("chardet.charsetprober").disabled = True  # 禁用字符集探
 
 # 定义所有支持的媒体路径（URL 编码），用于指定爬取的文件夹
 s_paths_all = [
-    quote("测试/"),  # 512
-    quote("动漫/"),  # 256
-    quote("每日更新/"),  # 128
-    quote("电影/"),  # 64
-    quote("电视剧/"),  # 32
-    quote("纪录片/"),  # 16
-    quote("纪录片（已刮削）/"),  # 8
-    quote("综艺/"),  # 4
     quote("国产剧专属/"),  # 4
-    quote("音乐/"),  # 2
-    quote("📺画质演示测试（4K，8K，HDR，Dolby）/"),  # 1
 ]
 
 # 定义必须检查的媒体文件夹（用于 test_media_folder）
 t_paths = [
-    quote("每日更新/"),
     quote("国产剧专属/"),
 ]
 
 # 定义默认爬取的路径（如果未指定 --paths 或 --all）
 s_paths = [
-    quote("每日更新/"),
-    quote("国产剧专属/"),
+    quote("国产剧专属/和谐剧集/"),
 ]
 
 # 定义默认的 URL 池，用于爬取媒体文件
