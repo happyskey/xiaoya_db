@@ -182,9 +182,11 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
     soup = BeautifulSoup(html, "html.parser")
     for link in soup.find_all("a"):
         href = link.get("href")
-        # 跳过无效或特殊链接（如排序链接、email-protection）
+        # 跳过无效或特殊链接（排序链接、email-protection 等）
         if not href or href.startswith("?C=") or "/cdn-cgi/l/email-protection" in href:
+            logger.debug("跳过无效链接: %s", href)
             continue
+        # 只处理文件和目录链接
         if (
             href != "../"
             and not href.endswith("/")
@@ -198,14 +200,25 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
                 if not link.next_sibling or not link.next_sibling.strip():
                     logger.debug("URL %s 无有效 next_sibling", href)
                     continue
-                # 提取时间戳并验证
-                timestamp_str = link.next_sibling.strip().split()[:2]
+                # 提取时间戳并验证格式
+                next_sibling_text = link.next_sibling.strip()
+                timestamp_str = next_sibling_text.split()[:2]
                 if len(timestamp_str) != 2:
-                    logger.debug("URL %s 的时间戳数据无效", href)
+                    logger.debug("URL %s 的时间戳数据无效: %s", href, next_sibling_text)
                     continue
-                timestamp = datetime.strptime(" ".join(timestamp_str), "%Y-%m-%d %H:%M")
+                # 验证时间戳格式是否符合 YYYY-MM-DD HH:MM
+                timestamp_text = " ".join(timestamp_str)
+                if not re.match(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", timestamp_text):
+                    logger.debug("URL %s 的时间戳格式无效: %s", href, timestamp_text)
+                    continue
+                timestamp = datetime.strptime(timestamp_text, "%Y-%m-%d %H:%M")
                 timestamp_unix = int(timestamp.timestamp())
-                filesize = link.next_sibling.strip().split()[2]
+                # 提取文件大小
+                filesize_parts = next_sibling_text.split()
+                if len(filesize_parts) < 3:
+                    logger.debug("URL %s 的文件大小数据无效: %s", href, next_sibling_text)
+                    continue
+                filesize = filesize_parts[2]
                 files.append((abslink, filename, timestamp_unix, filesize))
             except (urllib.error.URLError, ValueError) as e:
                 logger.exception("解析 URL 错误: %s", href)
@@ -230,7 +243,9 @@ async def need_download(file, **kwargs):
     current_filesize = os.path.getsize(file_path)
     current_timestamp = os.path.getmtime(file_path)
     logger.debug("%s 的时间戳: %s, 大小: %s", filename, timestamp, filesize)
-    if int(filesize) == int(current_filesize) and int(timestamp) <= int(current_timestamp):
+    if int(filesize) == int(current_filesize) and int(timestamp) <= int(
+        current_timestamp
+    ):
         return False
     logger.debug("%s 的当前时间戳: %s, 当前大小: %s", filename, current_timestamp, current_filesize)
     return True
@@ -314,7 +329,9 @@ def process_folder(folder, media):
 def remove_empty_folders(paths, media):
     """删除指定路径下的空文件夹"""
     for path in paths:
-        for root, dirs, files in os.walk(unquote(os.path.join(media, path)), topdown=False):
+        for root, dirs, files in os.walk(
+            unquote(os.path.join(media, path)), topdown=False
+        ):
             dirs[:] = [d for d in dirs if d not in s_folder]
             if not dirs and not files:
                 try:
@@ -366,7 +383,9 @@ async def write_one(url, session, db_session, **kwargs) -> list:
 async def bulk_crawl_and_write(url, session, db_session, depth=0, **kwargs) -> None:
     """递归爬取 URL 和其子目录"""
     tasks = set()
-    directories = await write_one(url=url, session=session, db_session=db_session, **kwargs)
+    directories = await write_one(
+        url=url, session=session, db_session=db_session, **kwargs
+    )
     for url in directories:
         task = asyncio.create_task(
             bulk_crawl_and_write(
