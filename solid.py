@@ -203,7 +203,7 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
                 filename = unquote(urlparse(abslink).path)
                 timestamp_str = link.next_sibling.strip().split()[0:2]
                 #timestamp = datetime.strptime(" ".join(timestamp_str), "%d-%b-%Y %H:%M")
-                timestamp = datetime.strptime(" ".join(timestamp_str), "%Y-%b-%d %H:%M")
+                timestamp = datetime.strptime(" ".join(timestamp_str), "%Y-%m-%d %H:%M")
                 timestamp_unix = int(timestamp.timestamp())
                 filesize = link.next_sibling.strip().split()[2]
                 files.append((abslink, filename, timestamp_unix, filesize))
