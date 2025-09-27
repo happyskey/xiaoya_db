@@ -124,17 +124,24 @@ async def fetch_html(url, session, **kwargs) -> str:
     """异步获取 URL 的 HTML 内容"""
     semaphore = kwargs["semaphore"]
     async with semaphore:
-        async with session.request(method="GET", url=url) as resp:
-            logger.debug("请求头 [%s]: [%s]", unquote(url), resp.request_info.headers)
-            resp.raise_for_status()
-            logger.debug("响应头 [%s]: [%s]", unquote(url), resp.headers)
-            logger.debug("收到响应 [%s] for URL: %s", resp.status, unquote(url))
-            try:
-                text = await resp.text()
-                return text
-            except UnicodeDecodeError:
-                logger.error("URL %s 返回非 UTF-8 内容", unquote(url))
-                return None
+        try:
+            async with session.request(method="GET", url=url) as resp:
+                logger.debug("请求头 [%s]: [%s]", unquote(url), resp.request_info.headers)
+                resp.raise_for_status()
+                logger.debug("响应头 [%s]: [%s]", unquote(url), resp.headers)
+                logger.debug("收到响应 [%s] for URL: %s", resp.status, unquote(url))
+                try:
+                    text = await resp.text()
+                    return text
+                except UnicodeDecodeError:
+                    logger.error("URL %s 返回非 UTF-8 内容", unquote(url))
+                    return None
+        except aiohttp.ClientSession as e:
+            logger.error("会话已关闭或不可用 for %s: %s", unquote(url), e)
+            raise
+        except Exception as e:
+            logger.exception("获取 HTML 失败 for %s: %s", unquote(url), e)
+            raise
 
 async def parse(url, session, max_retries=3, **kwargs) -> set:
     """解析 HTML 页面，提取文件和目录信息"""
@@ -142,42 +149,42 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
     retries = 0
     files = []
     directories = []
-    while True:
-        if retries < max_retries:
-            try:
-                html = await fetch_html(url=url, session=session, **kwargs)
-                if html is None:
-                    logger.debug("无法获取 URL 的 HTML 内容: %s", unquote(url))
-                    return files, directories
-                break
-            except aiohttp.ClientResponseError as e:
-                logger.error(
-                    "aiohttp ClientResponseError for %s [%s]: %s. 重试 (%d/%d)...",
-                    unquote(url),
-                    getattr(e, "status", None),
-                    getattr(e, "message", None),
-                    retries + 1,
-                    max_retries,
-                )
-                retries += 1
-            except (
-                aiohttp.ClientError,
-                aiohttp.http_exceptions.HttpProcessingError,
-                aiohttp.ClientPayloadError,
-            ) as e:
-                logger.error(
-                    "aiohttp 异常 for %s [%s]: %s",
-                    unquote(url),
-                    getattr(e, "status", None),
-                    getattr(e, "message", None),
-                )
+    while retries < max_retries:
+        try:
+            html = await fetch_html(url=url, session=session, **kwargs)
+            if html is None:
+                logger.debug("无法获取 URL 的 HTML 内容: %s", unquote(url))
                 return files, directories
-            except Exception as e:
-                logger.exception("非 aiohttp 异常: %s", getattr(e, "__dict__", {}))
-                return files, directories
-        else:
-            logger.error("达到最大重试次数，URL %s 请求失败", unquote(url))
+            break
+        except aiohttp.ClientResponseError as e:
+            logger.error(
+                "aiohttp ClientResponseError for %s [%s]: %s. 重试 (%d/%d)...",
+                unquote(url),
+                getattr(e, "status", None),
+                getattr(e, "message", None),
+                retries + 1,
+                max_retries,
+            )
+            retries += 1
+        except (
+            aiohttp.ClientError,
+            aiohttp.http_exceptions.HttpProcessingError,
+            aiohttp.ClientPayloadError,
+        ) as e:
+            logger.error(
+                "aiohttp 异常 for %s [%s]: %s",
+                unquote(url),
+                getattr(e, "status", None),
+                getattr(e, "message", None),
+            )
             return files, directories
+        except Exception as e:
+            logger.exception("非 aiohttp 异常: %s", getattr(e, "__dict__", {}))
+            return files, directories
+
+    if retries >= max_retries:
+        logger.error("达到最大重试次数，URL %s 请求失败", unquote(url))
+        return files, directories
 
     soup = BeautifulSoup(html, "html.parser")
     for link in soup.find_all("a"):
@@ -380,27 +387,30 @@ async def write_one(url, session, db_session, **kwargs) -> list:
         logger.debug("已写入 URL 的结果: %s", unquote(url))
     return directories
 
-async def bulk_crawl_and_write(url, session, db_session, depth=0, **kwargs) -> None:
-    """递归爬取 URL 和其子目录"""
-    tasks = set()
-    directories = await write_one(
-        url=url, session=session, db_session=db_session, **kwargs
-    )
-    for url in directories:
-        task = asyncio.create_task(
-            bulk_crawl_and_write(
-                url=url,
+async def bulk_crawl_and_write(url, session, db_session, depth=0, max_depth=10, **kwargs) -> None:
+    """递归爬取 URL 和其子目录，限制最大递归深度"""
+    if depth > max_depth:
+        logger.warning("达到最大递归深度 %d，停止爬取 URL: %s", max_depth, unquote(url))
+        return
+
+    tasks = []
+    try:
+        directories = await write_one(url=url, session=session, db_session=db_session, **kwargs)
+        logger.debug("URL %s 找到 %d 个子目录", unquote(url), len(directories))
+        for sub_url in directories:
+            task = bulk_crawl_and_write(
+                url=sub_url,
                 session=session,
                 db_session=db_session,
                 depth=depth + 1,
+                max_depth=max_depth,
                 **kwargs,
             )
-        )
-        task.add_done_callback(tasks.discard)
-        tasks.add(task)
-        if depth == 0:
-            await asyncio.gather(*tasks)
-    await asyncio.gather(*tasks)
+            tasks.append(task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    except Exception as e:
+        logger.exception("爬取 URL %s 时发生错误: %s", unquote(url), e)
 
 async def compare_databases(localdb, tempdb, total_amount):
     """比较本地和临时数据库，找出已删除的文件"""
