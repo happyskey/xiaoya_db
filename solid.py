@@ -51,6 +51,7 @@ t_paths = [
 ]
 
 s_paths = [
+    quote("每日更新/"),
     quote("国产剧专属/"),
 ]
 
