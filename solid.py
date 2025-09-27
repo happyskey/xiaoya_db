@@ -73,6 +73,32 @@ opener = urllib.request.build_opener()
 opener.addheaders = [("User-Agent", CUSTOM_USER_AGENT)]
 urllib.request.install_opener(opener)
 
+def parse_filesize(size_str):
+    """将带单位的文件大小（如 '144K'、'1.2G'）转换为字节数"""
+    size_str = size_str.strip().upper()
+    if not size_str:
+        return None
+    try:
+        # 匹配数字（整数或浮点数）+单位（K, M, G, T）
+        match = re.match(r"(\d*\.?\d+)([KMGT]?)", size_str)
+        if not match:
+            return int(size_str)  # 尝试直接转换为整数
+        size, unit = match.groups()
+        size = float(size)
+        if unit == "K":
+            return int(size * 1024)
+        elif unit == "M":
+            return int(size * 1024 * 1024)
+        elif unit == "G":
+            return int(size * 1024 * 1024 * 1024)
+        elif unit == "T":
+            return int(size * 1024 * 1024 * 1024 * 1024)
+        else:
+            return int(size)
+    except ValueError as e:
+        logger.error("无法解析文件大小 %s: %s", size_str, e)
+        return None
+
 def pick_a_pool_member(url_list):
     """从 URL 池中随机选择一个可用的 URL"""
     random.shuffle(url_list)
@@ -232,7 +258,12 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
                     logger.debug("URL %s 的文件大小数据无效: %s", href, next_sibling_text)
                     continue
                 filesize = filesize_parts[2]
-                files.append((abslink, filename, timestamp_unix, filesize))
+                # 转换文件大小为字节数
+                parsed_filesize = parse_filesize(filesize)
+                if parsed_filesize is None:
+                    logger.error("无法解析文件大小 %s for %s，跳过", filesize, href)
+                    continue
+                files.append((abslink, filename, timestamp_unix, parsed_filesize))
             except (urllib.error.URLError, ValueError) as e:
                 logger.exception("解析 URL 错误: %s", href)
                 continue
@@ -253,15 +284,17 @@ async def need_download(file, **kwargs):
     elif file_path.endswith(".nfo"):
         if not kwargs["nfo"]:
             return False
-    current_filesize = os.path.getsize(file_path)
-    current_timestamp = os.path.getmtime(file_path)
-    logger.debug("%s 的时间戳: %s, 大小: %s", filename, timestamp, filesize)
-    if int(filesize) == int(current_filesize) and int(timestamp) <= int(
-        current_timestamp
-    ):
-        return False
-    logger.debug("%s 的当前时间戳: %s, 当前大小: %s", filename, current_timestamp, current_filesize)
-    return True
+    try:
+        current_filesize = os.path.getsize(file_path)
+        current_timestamp = os.path.getmtime(file_path)
+        logger.debug("%s 的时间戳: %s, 大小: %s", filename, timestamp, filesize)
+        if int(filesize) == int(current_filesize) and int(timestamp) <= int(current_timestamp):
+            return False
+        logger.debug("%s 的当前时间戳: %s, 当前大小: %s", filename, current_timestamp, current_filesize)
+        return True
+    except ValueError as e:
+        logger.error("无法比较文件大小 %s for %s: %s", filesize, filename, e)
+        return False  # 跳过无法解析的文件大小
 
 async def download(file, session, **kwargs):
     """异步下载文件并保存到指定路径"""
@@ -658,7 +691,7 @@ async def main():
     logger.info("开始缓慢爬取...")
     async with ClientSession(
         connector=TCPConnector(ssl=False, limit=0, ttl_dns_cache=600),
-        timeout=aiohttp.ClientTimeout(total=3600),  # 降低总超时时间
+        timeout=aiohttp.ClientTimeout(total=3600),
     ) as session:
         await bulk_crawl_and_write(
             url=url,
