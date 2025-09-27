@@ -136,8 +136,11 @@ async def fetch_html(url, session, **kwargs) -> str:
                 except UnicodeDecodeError:
                     logger.error("URL %s 返回非 UTF-8 内容", unquote(url))
                     return None
-        except aiohttp.ClientSession as e:
-            logger.error("会话已关闭或不可用 for %s: %s", unquote(url), e)
+        except asyncio.exceptions.CancelledError as e:
+            logger.error("任务取消 for %s: %s", unquote(url), e)
+            raise
+        except aiohttp.ClientError as e:
+            logger.error("aiohttp 异常 for %s: %s", unquote(url), e)
             raise
         except Exception as e:
             logger.exception("获取 HTML 失败 for %s: %s", unquote(url), e)
@@ -156,6 +159,9 @@ async def parse(url, session, max_retries=3, **kwargs) -> set:
                 logger.debug("无法获取 URL 的 HTML 内容: %s", unquote(url))
                 return files, directories
             break
+        except asyncio.exceptions.CancelledError as e:
+            logger.error("任务取消 for %s: %s", unquote(url), e)
+            return files, directories
         except aiohttp.ClientResponseError as e:
             logger.error(
                 "aiohttp ClientResponseError for %s [%s]: %s. 重试 (%d/%d)...",
@@ -281,15 +287,16 @@ async def download(file, session, **kwargs):
 
 async def download_files(files, session, **kwargs):
     """批量下载文件"""
-    download_tasks = set()
+    download_tasks = []
     for file in files:
         if await need_download(file, **kwargs) is True:
             task = asyncio.create_task(download(file, session, **kwargs))
-            task.add_done_callback(download_tasks.discard)
-            download_tasks.add(task)
-            if len(download_tasks) > 100:
-                await asyncio.gather(*download_tasks)
-    await asyncio.gather(*download_tasks)
+            download_tasks.append(task)
+            if len(download_tasks) >= 50:  # 限制同时下载任务数
+                await asyncio.gather(*download_tasks, return_exceptions=True)
+                download_tasks = []
+    if download_tasks:
+        await asyncio.gather(*download_tasks, return_exceptions=True)
 
 async def create_table(conn):
     """创建数据库表，用于存储文件信息"""
@@ -409,6 +416,8 @@ async def bulk_crawl_and_write(url, session, db_session, depth=0, max_depth=10, 
             tasks.append(task)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+    except asyncio.exceptions.CancelledError as e:
+        logger.error("爬取 URL %s 时任务取消: %s", unquote(url), e)
     except Exception as e:
         logger.exception("爬取 URL %s 时发生错误: %s", unquote(url), e)
 
@@ -505,7 +514,7 @@ async def main():
         "--count",
         metavar="[number]",
         type=int,
-        default=100,
+        default=50,  # 降低默认并发数
         help="最大并发 HTTP 请求数 [默认: %(default)s]",
     )
     parser.add_argument(
@@ -624,13 +633,7 @@ async def main():
     db_session = None
     if args.db or args.purge:
         assert sys.version_info >= (3, 12), "数据库功能需要 Python 3.12+"
-        if args.location:
-            if test_db_folder(args.location) is True:
-                db_location = args.location.rstrip("/")
-            else:
-                sys.exit(1)
-        else:
-            db_location = media
+        db_location = args.location.rstrip("/") if args.location else media
         localdb = os.path.join(db_location, ".localfiles.db")
         tempdb = os.path.join(db_location, ".tempfiles.db")
         if not os.path.exists(localdb):
@@ -655,7 +658,7 @@ async def main():
     logger.info("开始缓慢爬取...")
     async with ClientSession(
         connector=TCPConnector(ssl=False, limit=0, ttl_dns_cache=600),
-        timeout=aiohttp.ClientTimeout(total=36000),
+        timeout=aiohttp.ClientTimeout(total=3600),  # 降低总超时时间
     ) as session:
         await bulk_crawl_and_write(
             url=url,
